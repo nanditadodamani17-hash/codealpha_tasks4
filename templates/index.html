@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="VisionTrack AI - Real-time object detection and multi-object tracking"
+    >
+
+    <title>VisionTrack AI | Object Intelligence</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+
+</head>
+
+
+<body>
+
+
+
+
+<div class="background-glow glow-one"></div>
+<div class="background-glow glow-two"></div>
+
+
+
+
+<div class="app">
+
+
+    
+
+    <aside class="sidebar">
+
+        <div class="brand">
+
+            <div class="brand-icon">
+                ◉
+            </div>
+
+            <div>
+
+                <h1>
+                    VisionTrack
+                </h1>
+
+                <span>
+                    AI OBJECT INTELLIGENCE
+                </span>
+
+            </div>
+
+        </div>
+
+
+        <nav>
+
+            <button
+                class="nav-item active"
+                data-target="dashboardSection"
+            >
+                <span>▦</span>
+                Dashboard
+            </button>
+
+
+            <button
+                class="nav-item"
+                data-target="videoSection"
+            >
+                <span>◉</span>
+                Live Vision
+            </button>
+
+
+            <button
+                class="nav-item"
+                data-target="analyticsSection"
+            >
+                <span>⌁</span>
+                Analytics
+            </button>
+
+        </nav>
+
+
+        <div class="sidebar-bottom">
+
+            <div class="engine-card">
+
+                <div class="engine-status">
+
+                    <span class="status-dot"></span>
+
+                    AI ENGINE ONLINE
+
+                </div>
+
+                <p>
+                    YOLO11 Detection
+                    <br>
+                    + Deep SORT Tracking
+                </p>
+
+            </div>
+
+
+            <div class="sidebar-feature">
+
+                <span>
+                    ● SMART MONITORING
+                </span>
+
+                <small>
+                    Restricted-zone alerts enabled
+                </small>
+
+            </div>
+
+
+            <div class="version">
+                TASK 04 • COMPUTER VISION
+            </div>
+
+        </div>
+
+    </aside>
+
+
+
+    <main class="main">
+
+
+
+        <header class="topbar">
+
+            <div>
+
+                <div class="breadcrumb">
+                    COMPUTER VISION / TRACKING
+                </div>
+
+                <h2>
+                    Object Intelligence
+                </h2>
+
+            </div>
+
+
+            <div class="top-actions">
+
+                <div class="system-pill">
+
+                    <span class="status-dot"></span>
+
+                    SYSTEM READY
+
+                </div>
+
+
+                <button
+                    class="icon-button"
+                    id="themeButton"
+                    title="Toggle theme"
+                >
+                    ☼
+                </button>
+
+            </div>
+
+        </header>
+
+
+        <section
+            class="dashboard-section"
+            id="dashboardSection"
+        >
+
+
+            <section class="hero">
+
+                <div>
+
+                    <span class="eyebrow">
+                        REAL-TIME COMPUTER VISION
+                    </span>
+
+                    <h3>
+                        See. Detect.
+                        <span>Track.</span>
+                    </h3>
+
+                    <p>
+                        Advanced object detection, persistent
+                        identity tracking and intelligent
+                        restricted-zone monitoring.
+                    </p>
+
+                </div>
+
+
+                <div class="hero-badge">
+
+                    <div class="pulse-ring">
+                        AI
+                    </div>
+
+                    <div>
+
+                        <strong>
+                            LIVE AI
+                        </strong>
+
+                        <small>
+                            YOLO + Deep SORT
+                        </small>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <section class="stats-grid">
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ◉
+                    </div>
+
+                    <div>
+
+                        <span>
+                            TRACKED OBJECTS
+                        </span>
+
+                        <strong id="objectCount">
+                            0
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        👤
+                    </div>
+
+                    <div>
+
+                        <span>
+                            PEOPLE
+                        </span>
+
+                        <strong id="peopleCount">
+                            0
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ⚡
+                    </div>
+
+                    <div>
+
+                        <span>
+                            PROCESSING FPS
+                        </span>
+
+                        <strong id="fpsValue">
+                            0
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        #
+                    </div>
+
+                    <div>
+
+                        <span>
+                            UNIQUE TRACKS
+                        </span>
+
+                        <strong id="uniqueTracks">
+                            0
+                        </strong>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </section>
+
+
+        <section
+            class="workspace"
+            id="videoSection"
+        >
+
+
+            <div class="video-card">
+
+
+                <div class="video-header">
+
+                    <div>
+
+                        <span class="live-indicator">
+
+                            <span></span>
+
+                            LIVE VISION
+
+                        </span>
+
+                        <h4>
+                            Detection Workspace
+                        </h4>
+
+                    </div>
+
+
+                    <div class="video-tools">
+
+                        <button
+                            id="captureButton"
+                            class="small-button"
+                        >
+                            📸 Capture
+                        </button>
+
+                        <button
+                            id="fullscreenButton"
+                            class="small-button"
+                        >
+                            ⛶
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <div
+                    class="video-area"
+                    id="videoArea"
+                >
+
+                    <div
+                        class="empty-state"
+                        id="emptyState"
+                    >
+
+                        <div class="camera-symbol">
+                            ◉
+                        </div>
+
+                        <h5>
+                            Vision feed is waiting
+                        </h5>
+
+                        <p>
+                            Start your webcam or upload a video
+                            to begin AI object tracking.
+                        </p>
+
+                        <button
+                            class="primary-button"
+                            id="emptyStartButton"
+                        >
+                            Start AI Camera
+                        </button>
+
+                    </div>
+
+
+                    <video
+                        id="cameraVideo"
+                        autoplay
+                        playsinline
+                        muted
+                    ></video>
+
+
+                    <img
+                        id="resultImage"
+                        alt="AI detection result"
+                    >
+
+
+                    <div
+                        class="scan-line"
+                        id="scanLine"
+                    ></div>
+
+
+                    <div
+                        class="camera-overlay"
+                        id="cameraOverlay"
+                    >
+
+                        <span>
+                            ● AI PROCESSING
+                        </span>
+
+                        <span id="overlayFPS">
+                            0 FPS
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        class="zone-status"
+                        id="zoneStatus"
+                    >
+                        <span></span>
+                        RESTRICTED ZONE ACTIVE
+                    </div>
+
+
+                    <div
+                        class="alert-banner"
+                        id="alertBanner"
+                    >
+                        <strong>
+                            🚨 SECURITY ALERT
+                        </strong>
+
+                        <span id="alertText">
+                            Restricted zone activity detected
+                        </span>
+                    </div>
+
+                </div>
+
+
+                <div class="video-controls">
+
+
+                    <button
+                        id="startButton"
+                        class="primary-button"
+                    >
+                        ▶ Start Camera
+                    </button>
+
+
+                    <button
+                        id="stopButton"
+                        class="danger-button"
+                        disabled
+                    >
+                        ■ Stop
+                    </button>
+
+
+                    <label
+                        class="upload-button"
+                        for="videoUpload"
+                    >
+                        ↑ Upload Video
+                    </label>
+
+                    <input
+                        type="file"
+                        id="videoUpload"
+                        accept="video/*"
+                        hidden
+                    >
+
+
+                    <button
+                        id="resetButton"
+                        class="secondary-button"
+                    >
+                        ↻ Reset Session
+                    </button>
+
+                </div>
+
+            </div>
+
+            <aside class="control-panel">
+
+
+                <div class="panel-section">
+
+                    <div class="section-title">
+
+                        <span>
+                            DETECTION CONTROL
+                        </span>
+
+                        <span class="live-tag">
+                            LIVE
+                        </span>
+
+                    </div>
+
+
+                    <label class="control-label">
+
+                        Confidence Threshold
+
+                        <strong id="confidenceValue">
+                            35%
+                        </strong>
+
+                    </label>
+
+
+                    <input
+                        type="range"
+                        id="confidenceSlider"
+                        min="10"
+                        max="90"
+                        value="35"
+                    >
+
+
+                    <div class="range-labels">
+
+                        <span>
+                            More objects
+                        </span>
+
+                        <span>
+                            More precise
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <div class="panel-section">
+
+                    <div class="section-title">
+
+                        <span>
+                            SECURITY ZONE
+                        </span>
+
+                        <span
+                            class="live-tag"
+                            id="zoneTag"
+                        >
+                            ACTIVE
+                        </span>
+
+                    </div>
+
+
+                    <div class="zone-control">
+
+                        <div>
+
+                            <strong>
+                                Restricted Zone
+                            </strong>
+
+                            <small>
+                                Alert when tracked objects enter
+                                the monitored area.
+                            </small>
+
+                        </div>
+
+
+                        <label class="switch">
+
+                            <input
+                                type="checkbox"
+                                id="zoneToggle"
+                                checked
+                            >
+
+                            <span class="switch-slider"></span>
+
+                        </label>
+
+                    </div>
+
+
+                    <div class="security-status">
+
+                        <span class="status-dot"></span>
+
+                        <span id="securityText">
+                            Monitoring active
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <div class="panel-section">
+
+                    <div class="section-title">
+
+                        <span>
+                            OBJECT TYPES
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        class="object-list"
+                        id="objectList"
+                    >
+
+                        <div class="object-row">
+
+                            <span class="object-name">
+                                Waiting...
+                            </span>
+
+                            <span class="object-number">
+                                0
+                            </span>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <div class="panel-section">
+
+                    <div class="section-title">
+
+                        <span>
+                            TRACKING ENGINE
+                        </span>
+
+                    </div>
+
+
+                    <div class="engine-row">
+
+                        <span>
+                            Detector
+                        </span>
+
+                        <strong>
+                            YOLO11n
+                        </strong>
+
+                    </div>
+
+
+                    <div class="engine-row">
+
+                        <span>
+                            Tracker
+                        </span>
+
+                        <strong>
+                            Deep SORT
+                        </strong>
+
+                    </div>
+
+
+                    <div class="engine-row">
+
+                        <span>
+                            Mode
+                        </span>
+
+                        <strong>
+                            Multi-object
+                        </strong>
+
+                    </div>
+
+
+                    <div class="engine-row">
+
+                        <span>
+                            Security
+                        </span>
+
+                        <strong
+                            class="online-text"
+                            id="securityEngine"
+                        >
+                            Active
+                        </strong>
+
+                    </div>
+
+                </div>
+
+                <div class="panel-section">
+
+                    <div class="section-title">
+
+                        <span>
+                            ACTIVITY
+                        </span>
+
+                        <span
+                            class="alert-count"
+                            id="alertCount"
+                        >
+                            0
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        class="activity-log"
+                        id="activityLog"
+                    >
+
+                        <div class="activity">
+
+                            <span></span>
+
+                            <div>
+
+                                <strong>
+                                    System initialized
+                                </strong>
+
+                                <small>
+                                    Ready for camera input
+                                </small>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </aside>
+
+        </section>
+
+        <section
+            class="analytics-section"
+            id="analyticsSection"
+        >
+
+            <div class="analytics-heading">
+
+                <div>
+
+                    <span class="eyebrow">
+                        REAL-TIME ANALYTICS
+                    </span>
+
+                    <h3>
+                        Detection Overview
+                    </h3>
+
+                </div>
+
+                <span class="analytics-status">
+                    ● LIVE DATA
+                </span>
+
+            </div>
+
+
+            <div class="analytics-grid">
+
+
+                <div class="analytics-card">
+
+                    <span>
+                        UNIQUE TRACKS
+                    </span>
+
+                    <strong id="analyticsUnique">
+                        0
+                    </strong>
+
+                    <div class="mini-bar">
+                        <span id="trackBar"></span>
+                    </div>
+
+                </div>
+
+
+                <div class="analytics-card">
+
+                    <span>
+                        PEOPLE DETECTED
+                    </span>
+
+                    <strong id="analyticsPeople">
+                        0
+                    </strong>
+
+                    <div class="mini-bar">
+                        <span id="peopleBar"></span>
+                    </div>
+
+                </div>
+
+
+                <div class="analytics-card">
+
+                    <span>
+                        CURRENT LOAD
+                    </span>
+
+                    <strong id="loadValue">
+                        0%
+                    </strong>
+
+                    <div class="mini-bar">
+                        <span id="loadBar"></span>
+                    </div>
+
+                </div>
+
+
+                <div class="analytics-card">
+
+                    <span>
+                        SECURITY
+                    </span>
+
+                    <strong id="analyticsSecurity">
+                        ACTIVE
+                    </strong>
+
+                    <div class="engine-wave">
+
+                        <i></i>
+                        <i></i>
+                        <i></i>
+                        <i></i>
+                        <i></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+        <footer>
+
+            <span>
+                VisionTrack AI
+            </span>
+
+            <span>
+                YOLO11 • OpenCV • Deep SORT • Flask
+            </span>
+
+            <span>
+                CodeAlpha Task 04
+            </span>
+
+        </footer>
+
+
+    </main>
+
+</div>
+
+<script
+    src="{{ url_for('static', filename='script.js') }}"
+></script>
+
+</body>
+
+</html>

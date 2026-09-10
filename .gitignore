@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+
+uploads/
+evidence/
+
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+
+.env
