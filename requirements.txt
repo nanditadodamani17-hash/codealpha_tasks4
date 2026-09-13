@@ -5,3 +5,4 @@ deep-sort-realtime
 numpy
 Pillow
 gunicorn
+setuptools<81
