@@ -1,21 +1,23 @@
 import os
+import cv2
 import time
 import base64
 import threading
-
-import cv2
 import numpy as np
 
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify
 
-from ultralytics import YOLO
-from deep_sort_realtime.deepsort_tracker import DeepSort
 
+# =========================================================
+# VISIONTRACK AI - LIGHTWEIGHT RENDER VERSION
+# =========================================================
 
 app = Flask(__name__)
 
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+PORT = int(os.environ.get("PORT", 10000))
 
+PROCESS_WIDTH = 640
+PROCESS_HEIGHT = 360
 
 UPLOAD_FOLDER = "uploads"
 EVIDENCE_FOLDER = "evidence"
@@ -23,164 +25,76 @@ EVIDENCE_FOLDER = "evidence"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(EVIDENCE_FOLDER, exist_ok=True)
 
-PROCESS_WIDTH = 640
-PROCESS_HEIGHT = 360
 
-print()
-print("========================================")
-print("        VISIONTRACK AI")
-print("========================================")
-print("Loading YOLO11n model...")
-
-model = YOLO("yolo11n.pt")
-
-print("YOLO11n loaded successfully.")
-print()
-
-def create_tracker():
-
-    return DeepSort(
-
-        max_age=30,
-
-        n_init=2,
-
-        max_iou_distance=0.7,
-
-        max_cosine_distance=0.3
-
-    )
-
-
-tracker = create_tracker()
-
-tracker_lock = threading.Lock()
-
-model_lock = threading.Lock()
-
+# =========================================================
+# SETTINGS
+# =========================================================
 
 settings = {
-
     "confidence": 0.35,
-
     "zone_enabled": True,
+    "loitering_seconds": 10,
+    "line_position": 0.50,
 
     "zone": {
-
         "x": 0.60,
-
         "y": 0.20,
-
         "width": 0.30,
-
         "height": 0.60
-
-    },
-
-    "loitering_seconds": 10,
-
-    # Horizontal line
-    "line_position": 0.50
-
+    }
 }
 
 
-unique_track_ids = set()
+# =========================================================
+# TRACKING MEMORY
+# =========================================================
 
-track_first_seen = {}
+tracks = {}
 
-track_last_seen = {}
+next_track_id = 1
 
-track_previous_center = {}
+counted_entry_ids = set()
+counted_exit_ids = set()
 
 track_zone_start = {}
-
 track_loiter_alerted = set()
-
 track_inside_zone = {}
-
-last_zone_alert_time = {}
-
-last_loiter_alert_time = {}
 
 last_evidence_time = {}
 
+tracker_lock = threading.Lock()
 
 
-
-counted_entry_ids = set()
-
-counted_exit_ids = set()
+# =========================================================
+# ANALYTICS
+# =========================================================
 
 total_entries = 0
-
 total_exits = 0
-
 total_loitering_alerts = 0
-
 total_zone_alerts = 0
-
 total_evidence = 0
 
-
-@app.route("/")
-def home():
-
-    return render_template("index.html")
+unique_track_ids = set()
 
 
-@app.route("/health")
-def health():
+# =========================================================
+# RESET
+# =========================================================
 
-    return jsonify({
-
-        "status": "online",
-
-        "model": "YOLO11n",
-
-        "tracker": "Deep SORT",
-
-        "features": [
-
-            "YOLO object detection",
-
-            "Deep SORT tracking",
-
-            "people counting",
-
-            "unique tracking IDs",
-
-            "restricted zone",
-
-            "loitering detection",
-
-            "entry exit counting",
-
-            "automatic evidence capture",
-
-            "real time analytics"
-
-        ]
-
-    })
-
-
-@app.route("/evidence/<path:filename>")
-def evidence_file(filename):
-
-    return send_from_directory(
-
-        EVIDENCE_FOLDER,
-
-        filename
-
-    )
-
-
-@app.route("/api/reset", methods=["POST"])
 def reset_tracking():
 
-    global tracker
+    global tracks
+    global next_track_id
+
+    global counted_entry_ids
+    global counted_exit_ids
+
+    global track_zone_start
+    global track_loiter_alerted
+    global track_inside_zone
+
+    global last_evidence_time
 
     global total_entries
     global total_exits
@@ -188,2087 +102,883 @@ def reset_tracking():
     global total_zone_alerts
     global total_evidence
 
+    global unique_track_ids
+
     with tracker_lock:
 
+        tracks = {}
 
-        tracker = create_tracker()
+        next_track_id = 1
 
-
-        unique_track_ids.clear()
-
-        track_first_seen.clear()
-
-        track_last_seen.clear()
-
-        track_previous_center.clear()
+        counted_entry_ids.clear()
+        counted_exit_ids.clear()
 
         track_zone_start.clear()
-
         track_loiter_alerted.clear()
-
         track_inside_zone.clear()
-
-        last_zone_alert_time.clear()
-
-        last_loiter_alert_time.clear()
 
         last_evidence_time.clear()
 
-        counted_entry_ids.clear()
+        total_entries = 0
+        total_exits = 0
+        total_loitering_alerts = 0
+        total_zone_alerts = 0
+        total_evidence = 0
 
-        counted_exit_ids.clear()
-
-
-    total_entries = 0
-
-    total_exits = 0
-
-    total_loitering_alerts = 0
-
-    total_zone_alerts = 0
-
-    total_evidence = 0
-
-    return jsonify({
-
-        "success": True,
-
-        "message":
-            "Tracking session reset successfully."
-
-    })
+        unique_track_ids.clear()
 
 
+# =========================================================
+# IMAGE DECODER
+# =========================================================
 
-@app.route("/api/settings", methods=["POST"])
-def update_settings():
+def decode_image(data):
 
     try:
 
-        data = request.get_json() or {}
+        if "," in data:
+            data = data.split(",", 1)[1]
 
-        if "confidence" in data:
+        raw = base64.b64decode(data)
 
-            confidence = float(
-                data["confidence"]
-            )
+        array = np.frombuffer(raw, dtype=np.uint8)
 
-            confidence = max(
+        frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
 
-                0.10,
+        return frame
 
-                min(
-                    confidence,
-                    0.95
+    except Exception:
+
+        return None
+
+
+# =========================================================
+# SIMPLE LIGHTWEIGHT OBJECT DETECTOR
+# =========================================================
+#
+# This version intentionally avoids PyTorch/YOLO.
+#
+# It uses OpenCV's lightweight motion/contour detection
+# so the Render FREE instance can run within limited RAM.
+#
+# =========================================================
+
+def detect_objects(frame):
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    gray = cv2.GaussianBlur(gray, (7, 7), 0)
+
+    return gray
+
+
+# =========================================================
+# SIMPLE TRACKING
+# =========================================================
+
+def update_tracks(detections):
+
+    global next_track_id
+
+    current_ids = []
+
+    used_ids = set()
+
+    with tracker_lock:
+
+        # Match current detections with previous tracks
+        for detection in detections:
+
+            cx, cy, x1, y1, x2, y2, class_name = detection
+
+            best_id = None
+            best_distance = 999999
+
+            for track_id, track in tracks.items():
+
+                if track_id in used_ids:
+                    continue
+
+                old_cx = track["cx"]
+                old_cy = track["cy"]
+
+                distance = np.sqrt(
+                    (cx - old_cx) ** 2 +
+                    (cy - old_cy) ** 2
                 )
 
-            )
+                if distance < best_distance and distance < 100:
 
-            settings["confidence"] = confidence
+                    best_distance = distance
+                    best_id = track_id
 
+            if best_id is None:
 
-        if "zone_enabled" in data:
+                best_id = next_track_id
+                next_track_id += 1
 
-            settings["zone_enabled"] = bool(
-
-                data["zone_enabled"]
-
-            )
-
-
-        if "loitering_seconds" in data:
-
-            seconds = int(
-
-                data["loitering_seconds"]
-
-            )
-
-            settings["loitering_seconds"] = max(
-
-                3,
-
-                min(
-                    seconds,
-                    300
-                )
-
-            )
-
-        if "line_position" in data:
-
-            settings["line_position"] = max(
-
-                0.10,
-
-                min(
-
-                    float(
-                        data["line_position"]
-                    ),
-
-                    0.90
-
-                )
-
-            )
-
-        if "zone" in data:
-
-            zone = data["zone"]
-
-            settings["zone"] = {
-
-                "x": max(
-
-                    0,
-
-                    min(
-
-                        float(
-                            zone.get(
-                                "x",
-                                0.60
-                            )
-                        ),
-
-                        0.95
-
-                    )
-
-                ),
-
-                "y": max(
-
-                    0,
-
-                    min(
-
-                        float(
-                            zone.get(
-                                "y",
-                                0.20
-                            )
-                        ),
-
-                        0.95
-
-                    )
-
-                ),
-
-                "width": max(
-
-                    0.05,
-
-                    min(
-
-                        float(
-                            zone.get(
-                                "width",
-                                0.30
-                            )
-                        ),
-
-                        0.95
-
-                    )
-
-                ),
-
-                "height": max(
-
-                    0.05,
-
-                    min(
-
-                        float(
-                            zone.get(
-                                "height",
-                                0.60
-                            )
-                        ),
-
-                        0.95
-
-                    )
-
-                )
-
+            tracks[best_id] = {
+                "cx": cx,
+                "cy": cy,
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+                "class_name": class_name,
+                "last_seen": time.time()
             }
 
-        return jsonify({
+            used_ids.add(best_id)
 
-            "success": True,
+            current_ids.append(best_id)
 
-            "confidence":
-                settings["confidence"],
-
-            "zone_enabled":
-                settings["zone_enabled"],
-
-            "loitering_seconds":
-                settings["loitering_seconds"],
-
-            "line_position":
-                settings["line_position"],
-
-            "zone":
-                settings["zone"]
-
-        })
-
-    except Exception as error:
-
-        return jsonify({
-
-            "success": False,
-
-            "message":
-                str(error)
-
-        }), 400
+    return current_ids
 
 
+# =========================================================
+# MOTION DETECTION
+# =========================================================
 
-def point_inside_zone(
+previous_gray = None
 
-    center_x,
 
-    center_y,
+def motion_detection(frame):
 
-    frame_width,
+    global previous_gray
 
-    frame_height
+    gray = detect_objects(frame)
 
-):
+    if previous_gray is None:
 
-    zone = settings["zone"]
+        previous_gray = gray.copy()
 
-    zx = int(
+        return []
 
-        zone["x"] *
+    difference = cv2.absdiff(previous_gray, gray)
 
-        frame_width
+    previous_gray = gray.copy()
 
+    _, threshold = cv2.threshold(
+        difference,
+        25,
+        255,
+        cv2.THRESH_BINARY
     )
 
-    zy = int(
-
-        zone["y"] *
-
-        frame_height
-
+    threshold = cv2.dilate(
+        threshold,
+        None,
+        iterations=2
     )
 
-    zw = int(
-
-        zone["width"] *
-
-        frame_width
-
+    contours, _ = cv2.findContours(
+        threshold,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
     )
 
-    zh = int(
+    detections = []
 
-        zone["height"] *
+    frame_area = frame.shape[0] * frame.shape[1]
 
-        frame_height
+    for contour in contours:
 
-    )
+        x, y, w, h = cv2.boundingRect(contour)
 
-    return (
+        area = w * h
 
-        zx <= center_x <= zx + zw
+        if area < frame_area * 0.003:
+            continue
 
-        and
+        if w < 20 or h < 20:
+            continue
 
-        zy <= center_y <= zy + zh
+        if w > frame.shape[1] * 0.8:
+            continue
 
-    )
+        if h > frame.shape[0] * 0.8:
+            continue
 
+        cx = x + w // 2
+        cy = y + h // 2
 
-def create_zone_alert(
+        # Lightweight classification
+        if h > w * 1.15:
+            class_name = "person"
+        else:
+            class_name = "object"
 
-    track_id,
-
-    class_name
-
-):
-
-    global total_zone_alerts
-
-    now = time.time()
-
-    previous = (
-
-        last_zone_alert_time.get(
-
-            track_id,
-
-            0
-
+        detections.append(
+            (
+                cx,
+                cy,
+                x,
+                y,
+                x + w,
+                y + h,
+                class_name
+            )
         )
 
-    )
+    return detections
 
 
-    if now - previous < 3:
+# =========================================================
+# EVIDENCE CAPTURE
+# =========================================================
 
-        return None
-
-    last_zone_alert_time[
-
-        track_id
-
-    ] = now
-
-    total_zone_alerts += 1
-
-    return {
-
-        "type":
-            "restricted_zone",
-
-        "track_id":
-            track_id,
-
-        "class":
-            class_name,
-
-        "message": (
-
-            f"{class_name.upper()} "
-
-            f"ID:{track_id} "
-
-            "entered restricted zone"
-
-        ),
-
-        "timestamp":
-            time.strftime(
-                "%H:%M:%S"
-            )
-
-    }
-
-
-def create_loitering_alert(
-
-    track_id,
-
-    class_name,
-
-    duration
-
-):
-
-    global total_loitering_alerts
-
-    now = time.time()
-
-    previous = (
-
-        last_loiter_alert_time.get(
-
-            track_id,
-
-            0
-
-        )
-
-    )
-
-    if now - previous < 10:
-
-        return None
-
-    last_loiter_alert_time[
-
-        track_id
-
-    ] = now
-
-    total_loitering_alerts += 1
-
-    track_loiter_alerted.add(
-
-        track_id
-
-    )
-
-    return {
-
-        "type":
-            "loitering",
-
-        "track_id":
-            track_id,
-
-        "class":
-            class_name,
-
-        "duration":
-            duration,
-
-        "message": (
-
-            f"{class_name.upper()} "
-
-            f"ID:{track_id} "
-
-            f"loitering detected "
-
-            f"for {duration}s"
-
-        ),
-
-        "timestamp":
-            time.strftime(
-                "%H:%M:%S"
-            )
-
-    }
-
-
-
-def save_evidence(
-
-    frame,
-
-    alert_type,
-
-    track_id,
-
-    class_name,
-
-    bbox=None
-
-):
+def save_evidence(frame, x1, y1, x2, y2, track_id, reason):
 
     global total_evidence
 
     now = time.time()
 
-    previous = (
+    last_time = last_evidence_time.get(track_id, 0)
 
-        last_evidence_time.get(
-
-            track_id,
-
-            0
-
-        )
-
-    )
-
-
-    if now - previous < 5:
-
+    if now - last_time < 5:
         return None
 
-    last_evidence_time[
-
-        track_id
-
-    ] = now
-
-    timestamp = time.strftime(
-
-        "%Y%m%d_%H%M%S"
-
-    )
-
     filename = (
-
-        f"{alert_type}_"
-
-        f"ID{track_id}_"
-
-        f"{timestamp}.jpg"
-
+        f"evidence_{track_id}_"
+        f"{int(now)}_{reason}.jpg"
     )
 
-    filepath = os.path.join(
-
+    path = os.path.join(
         EVIDENCE_FOLDER,
-
         filename
-
     )
 
-    evidence_frame = frame.copy()
-
-
-    if bbox is not None:
-
-        x1, y1, x2, y2 = bbox
-
-        cv2.rectangle(
-
-            evidence_frame,
-
-            (x1, y1),
-
-            (x2, y2),
-
-            (0, 0, 255),
-
-            3
-
-        )
-
-        object_label = (
-
-            f"{class_name.upper()} "
-
-            f"ID:{track_id}"
-
-        )
-
-        cv2.putText(
-
-            evidence_frame,
-
-            object_label,
-
-            (
-                x1,
-                max(
-                    22,
-                    y1 - 8
-                )
-            ),
-
-            cv2.FONT_HERSHEY_SIMPLEX,
-
-            0.55,
-
-            (0, 0, 255),
-
-            2
-
-        )
-
+    evidence = frame.copy()
 
     cv2.rectangle(
-
-        evidence_frame,
-
-        (0, 0),
-
-        (
-            PROCESS_WIDTH,
-            52
-        ),
-
-        (20, 20, 20),
-
-        -1
-
-    )
-
-    text = (
-
-        "VISIONTRACK AI | "
-
-        f"{alert_type.upper()} | "
-
-        f"{class_name.upper()} "
-
-        f"ID:{track_id}"
-
+        evidence,
+        (x1, y1),
+        (x2, y2),
+        (0, 0, 255),
+        3
     )
 
     cv2.putText(
-
-        evidence_frame,
-
-        text,
-
-        (12, 32),
-
+        evidence,
+        f"TRACK {track_id} - {reason.upper()}",
+        (20, 35),
         cv2.FONT_HERSHEY_SIMPLEX,
-
-        0.50,
-
-        (255, 255, 255),
-
+        0.8,
+        (0, 0, 255),
         2
-
     )
 
-    
-    saved = cv2.imwrite(
+    try:
 
-        filepath,
+        cv2.imwrite(path, evidence)
 
-        evidence_frame,
+        last_evidence_time[track_id] = now
 
-        [
+        total_evidence += 1
 
-            cv2.IMWRITE_JPEG_QUALITY,
+        return filename
 
-            90
-
-        ]
-
-    )
-
-    if not saved:
+    except Exception:
 
         return None
 
-    total_evidence += 1
 
-    return filename
+# =========================================================
+# ZONE CHECK
+# =========================================================
+
+def is_inside_zone(cx, cy, width, height):
+
+    zone = settings["zone"]
+
+    zx1 = int(zone["x"] * width)
+    zy1 = int(zone["y"] * height)
+
+    zx2 = int(
+        (zone["x"] + zone["width"]) * width
+    )
+
+    zy2 = int(
+        (zone["y"] + zone["height"]) * height
+    )
+
+    return (
+        zx1 <= cx <= zx2
+        and
+        zy1 <= cy <= zy2
+    )
 
 
-@app.route(
+# =========================================================
+# MAIN DETECTION API
+# =========================================================
 
-    "/api/detect",
-
-    methods=["POST"]
-
-)
+@app.route("/api/detect", methods=["POST"])
 def detect():
 
     global total_entries
     global total_exits
+    global total_loitering_alerts
+    global total_zone_alerts
 
-    try:
+    start_time = time.time()
 
-        start_time = time.perf_counter()
+    data = request.get_json(silent=True)
 
-       
+    if not data or "image" not in data:
 
-        data = request.get_json()
+        return jsonify({
+            "success": False,
+            "message": "No image received"
+        }), 400
 
-        if not data or "image" not in data:
+    frame = decode_image(data["image"])
 
-            return jsonify({
+    if frame is None:
 
-                "success": False,
+        return jsonify({
+            "success": False,
+            "message": "Invalid image"
+        }), 400
 
-                "message":
-                    "No image received."
+    frame = cv2.resize(
+        frame,
+        (PROCESS_WIDTH, PROCESS_HEIGHT)
+    )
 
-            }), 400
+    height, width = frame.shape[:2]
 
-       
-        image_data = data["image"]
+    # -----------------------------------------------------
+    # DETECTION
+    # -----------------------------------------------------
 
-        if "," in image_data:
+    detections = motion_detection(frame)
 
-            image_data = (
+    # -----------------------------------------------------
+    # TRACKING
+    # -----------------------------------------------------
 
-                image_data.split(
+    current_ids = update_tracks(detections)
 
-                    ",",
+    alerts = []
 
-                    1
+    evidence_files = []
 
-                )[1]
+    entries_this_frame = 0
+    exits_this_frame = 0
 
-            )
+    people_count = 0
 
-        image_bytes = (
+    object_classes = []
 
-            base64.b64decode(
+    # -----------------------------------------------------
+    # PROCESS TRACKS
+    # -----------------------------------------------------
 
-                image_data
+    for track_id in current_ids:
 
-            )
+        track = tracks[track_id]
 
-        )
+        cx = track["cx"]
+        cy = track["cy"]
 
-        np_arr = np.frombuffer(
+        x1 = track["x1"]
+        y1 = track["y1"]
+        x2 = track["x2"]
+        y2 = track["y2"]
 
-            image_bytes,
+        class_name = track["class_name"]
 
-            np.uint8
+        object_classes.append(class_name)
 
-        )
+        if class_name == "person":
 
-        frame = cv2.imdecode(
+            people_count += 1
 
-            np_arr,
+        unique_track_ids.add(track_id)
 
-            cv2.IMREAD_COLOR
+        # -------------------------------------------------
+        # DRAW BOUNDING BOX
+        # -------------------------------------------------
 
-        )
-
-        if frame is None:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                    "Could not decode image."
-
-            }), 400
-
-        
-        frame = cv2.resize(
-
+        cv2.rectangle(
             frame,
-
-            (
-                PROCESS_WIDTH,
-                PROCESS_HEIGHT
-            ),
-
-            interpolation=cv2.INTER_AREA
-
-        )
-
-        frame_height, frame_width = (
-
-            frame.shape[:2]
-
-        )
-
-        
-
-        with model_lock:
-
-            results = model.predict(
-
-                frame,
-
-                conf=settings[
-                    "confidence"
-                ],
-
-                imgsz=640,
-
-                verbose=False
-
-            )
-
-        result = results[0]
-
-
-        detections = []
-
-        if result.boxes is not None:
-
-            for box in result.boxes:
-
-                confidence = float(
-
-                    box.conf[0]
-
-                )
-
-                class_id = int(
-
-                    box.cls[0]
-
-                )
-
-                x1, y1, x2, y2 = map(
-
-                    int,
-
-                    box.xyxy[0].tolist()
-
-                )
-
-                width = x2 - x1
-
-                height = y2 - y1
-
-                class_name = model.names[
-
-                    class_id
-
-                ]
-
-                detections.append(
-
-                    (
-
-                        [
-
-                            x1,
-
-                            y1,
-
-                            width,
-
-                            height
-
-                        ],
-
-                        confidence,
-
-                        class_name
-
-                    )
-
-                )
-
-        
-
-        with tracker_lock:
-
-            tracks = tracker.update_tracks(
-
-                detections,
-
-                frame=frame
-
-            )
-
-       
-        tracked_objects = []
-
-        alerts = []
-
-        evidence_files = []
-
-        entries_this_frame = 0
-
-        exits_this_frame = 0
-
-
-        zone = settings["zone"]
-
-        zone_x1 = int(
-
-            zone["x"]
-
-            * frame_width
-
-        )
-
-        zone_y1 = int(
-
-            zone["y"]
-
-            * frame_height
-
-        )
-
-        zone_x2 = int(
-
-            (
-                zone["x"]
-
-                +
-
-                zone["width"]
-
-            )
-
-            * frame_width
-
-        )
-
-        zone_y2 = int(
-
-            (
-                zone["y"]
-
-                +
-
-                zone["height"]
-
-            )
-
-            * frame_height
-
-        )
-
-       
-
-        if settings["zone_enabled"]:
-
-            overlay = frame.copy()
-
-            cv2.rectangle(
-
-                overlay,
-
-                (
-                    zone_x1,
-                    zone_y1
-                ),
-
-                (
-                    zone_x2,
-                    zone_y2
-                ),
-
-                (0, 0, 255),
-
-                -1
-
-            )
-
-            frame = cv2.addWeighted(
-
-                overlay,
-
-                0.10,
-
-                frame,
-
-                0.90,
-
-                0
-
-            )
-
-            cv2.rectangle(
-
-                frame,
-
-                (
-                    zone_x1,
-                    zone_y1
-                ),
-
-                (
-                    zone_x2,
-                    zone_y2
-                ),
-
-                (0, 0, 255),
-
-                2
-
-            )
-
-            cv2.putText(
-
-                frame,
-
-                "RESTRICTED ZONE",
-
-                (
-                    zone_x1 + 8,
-
-                    max(
-                        22,
-                        zone_y1 - 8
-                    )
-
-                ),
-
-                cv2.FONT_HERSHEY_SIMPLEX,
-
-                0.50,
-
-                (0, 0, 255),
-
-                2
-
-            )
-
-        
-
-        line_y = int(
-
-            settings[
-                "line_position"
-            ]
-
-            * frame_height
-
-        )
-
-        cv2.line(
-
-            frame,
-
-            (
-                0,
-                line_y
-            ),
-
-            (
-                frame_width,
-                line_y
-            ),
-
-            (255, 200, 0),
-
+            (x1, y1),
+            (x2, y2),
+            (255, 180, 0),
             2
-
         )
 
         cv2.putText(
-
             frame,
-
-            "ENTRY / EXIT",
-
-            (
-                10,
-
-                max(
-                    25,
-                    line_y - 10
-                )
-
-            ),
-
+            f"{class_name} | ID {track_id}",
+            (x1, max(20, y1 - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
-
-            0.45,
-
-            (255, 200, 0),
-
+            0.55,
+            (255, 180, 0),
             2
-
         )
 
-       
+        # -------------------------------------------------
+        # ENTRY / EXIT LINE
+        # -------------------------------------------------
 
-        for track in tracks:
+        line_y = int(
+            settings["line_position"] * height
+        )
 
-            if not track.is_confirmed():
+        previous_y = track.get("previous_y")
 
-                continue
+        if previous_y is not None:
 
-            if track.time_since_update > 1:
+            if class_name == "person":
 
-                continue
-
-            track_id = int(
-
-                track.track_id
-
-            )
-
-            ltrb = track.to_ltrb()
-
-            if ltrb is None:
-
-                continue
-
-            x1, y1, x2, y2 = map(
-
-                int,
-
-                ltrb
-
-            )
-
-           
-
-            class_name = (
-
-                track.get_det_class()
-
-            )
-
-            if class_name is None:
-
-                class_name = "object"
-
-           
-            x1 = max(
-
-                0,
-
-                min(
-                    x1,
-                    frame_width - 1
-                )
-
-            )
-
-            y1 = max(
-
-                0,
-
-                min(
-                    y1,
-                    frame_height - 1
-                )
-
-            )
-
-            x2 = max(
-
-                0,
-
-                min(
-                    x2,
-                    frame_width - 1
-                )
-
-            )
-
-            y2 = max(
-
-                0,
-
-                min(
-                    y2,
-                    frame_height - 1
-                )
-
-            )
-
-
-            center_x = int(
-
-                (x1 + x2) / 2
-
-            )
-
-            center_y = int(
-
-                (y1 + y2) / 2
-
-            )
-
-            now = time.time()
-
-            
-            if track_id not in track_first_seen:
-
-                track_first_seen[
-                    track_id
-                ] = now
-
-            track_last_seen[
-                track_id
-            ] = now
-
-            unique_track_ids.add(
-
-                track_id
-
-            )
-
-            duration = int(
-
-                now
-
-                -
-
-                track_first_seen[
-                    track_id
-                ]
-
-            )
-
-           
-            previous_center = (
-
-                track_previous_center.get(
-
-                    track_id
-
-                )
-
-            )
-
-            # IMPORTANT:
-            # Entry/Exit is ONLY for people.
-
-            if (
-
-                class_name == "person"
-
-                and
-
-                previous_center is not None
-
-            ):
-
-                previous_y = (
-
-                    previous_center[1]
-
-                )
-
-
-                crossed_down = (
-
-                    previous_y < line_y - 4
-
-                    and
-
-                    center_y >= line_y + 2
-
-                )
-
+                # ENTRY
                 if (
-
-                    crossed_down
-
+                    previous_y < line_y - 4
                     and
-
-                    track_id
-                    not in
-                    counted_entry_ids
-
+                    cy >= line_y + 2
+                    and
+                    track_id not in counted_entry_ids
                 ):
+
+                    counted_entry_ids.add(track_id)
 
                     total_entries += 1
 
                     entries_this_frame += 1
 
-                    counted_entry_ids.add(
-
-                        track_id
-
+                    alerts.append(
+                        f"ENTRY detected - ID {track_id}"
                     )
 
-              
-                crossed_up = (
-
-                    previous_y > line_y + 4
-
-                    and
-
-                    center_y <= line_y - 2
-
-                )
-
+                # EXIT
                 if (
-
-                    crossed_up
-
+                    previous_y > line_y + 4
                     and
-
-                    track_id
-                    not in
-                    counted_exit_ids
-
+                    cy <= line_y - 2
+                    and
+                    track_id not in counted_exit_ids
                 ):
+
+                    counted_exit_ids.add(track_id)
 
                     total_exits += 1
 
                     exits_this_frame += 1
 
-                    counted_exit_ids.add(
-
-                        track_id
-
+                    alerts.append(
+                        f"EXIT detected - ID {track_id}"
                     )
 
-            track_previous_center[
+        track["previous_y"] = cy
 
-                track_id
+        # -------------------------------------------------
+        # RESTRICTED ZONE
+        # -------------------------------------------------
 
-            ] = (
+        inside_zone = is_inside_zone(
+            cx,
+            cy,
+            width,
+            height
+        )
 
-                center_x,
+        was_inside = track_inside_zone.get(
+            track_id,
+            False
+        )
 
-                center_y
+        if settings["zone_enabled"]:
 
-            )
+            if inside_zone and not was_inside:
 
-          
+                total_zone_alerts += 1
 
-            inside_zone = False
-
-            if settings["zone_enabled"]:
-
-                inside_zone = (
-
-                    zone_x1
-                    <=
-                    center_x
-                    <=
-                    zone_x2
-
-                    and
-
-                    zone_y1
-                    <=
-                    center_y
-                    <=
-                    zone_y2
-
+                alerts.append(
+                    f"RESTRICTED ZONE - ID {track_id}"
                 )
 
-                was_inside = (
-
-                    track_inside_zone.get(
-
-                        track_id,
-
-                        False
-
-                    )
-
-                )
-
-              
-
-                if inside_zone:
-
-                    if track_id not in track_zone_start:
-
-                        track_zone_start[
-
-                            track_id
-
-                        ] = now
-
-                    zone_duration = int(
-
-                        now
-
-                        -
-
-                        track_zone_start[
-                            track_id
-                        ]
-
-                    )
-
-                   
-                    if not was_inside:
-
-                        zone_alert = (
-
-                            create_zone_alert(
-
-                                track_id,
-
-                                class_name
-
-                            )
-
-                        )
-
-                        if zone_alert:
-
-                            alerts.append(
-
-                                zone_alert
-
-                            )
-
-                            evidence = (
-
-                                save_evidence(
-
-                                    frame,
-
-                                    "restricted_zone",
-
-                                    track_id,
-
-                                    class_name,
-
-                                    (
-                                        x1,
-                                        y1,
-                                        x2,
-                                        y2
-                                    )
-
-                                )
-
-                            )
-
-                            if evidence:
-
-                                evidence_files.append(
-
-                                    evidence
-
-                                )
-
-                  
-
-                    if (
-
-                        zone_duration
-
-                        >=
-
-                        settings[
-                            "loitering_seconds"
-                        ]
-
-                        and
-
-                        track_id
-
-                        not in
-
-                        track_loiter_alerted
-
-                    ):
-
-                        loiter_alert = (
-
-                            create_loitering_alert(
-
-                                track_id,
-
-                                class_name,
-
-                                zone_duration
-
-                            )
-
-                        )
-
-                        if loiter_alert:
-
-                            alerts.append(
-
-                                loiter_alert
-
-                            )
-
-                            evidence = (
-
-                                save_evidence(
-
-                                    frame,
-
-                                    "loitering",
-
-                                    track_id,
-
-                                    class_name,
-
-                                    (
-                                        x1,
-                                        y1,
-                                        x2,
-                                        y2
-                                    )
-
-                                )
-
-                            )
-
-                            if evidence:
-
-                                evidence_files.append(
-
-                                    evidence
-
-                                )
-
-                else:
-
-                    # Person left zone
-
-                    track_zone_start.pop(
-
-                        track_id,
-
-                        None
-
-                    )
-
-                    track_loiter_alerted.discard(
-
-                        track_id
-
-                    )
-
-                track_inside_zone[
-
-                    track_id
-
-                ] = inside_zone
-
-           
-
-            if inside_zone:
-
-                box_color = (
-
-                    0,
-                    0,
-                    255
-
-                )
-
-            else:
-
-                box_color = (
-
-                    255,
-                    255,
-                    255
-
-                )
-
-
-            cv2.rectangle(
-
-                frame,
-
-                (
+                evidence = save_evidence(
+                    frame,
                     x1,
-                    y1
-                ),
-
-                (
-                    x2,
-                    y2
-                ),
-
-                box_color,
-
-                2
-
-            )
-
-           
-
-            label = (
-
-                f"{class_name.upper()} "
-
-                f"ID:{track_id}"
-
-            )
-
-            label_width = max(
-
-                145,
-
-                len(label) * 9
-
-            )
-
-            label_width = min(
-
-                label_width,
-
-                frame_width - x1
-
-            )
-
-            cv2.rectangle(
-
-                frame,
-
-                (
-                    x1,
-
-                    max(
-                        0,
-                        y1 - 25
-                    )
-
-                ),
-
-                (
-                    x1 + label_width,
-
-                    y1
-
-                ),
-
-                box_color,
-
-                -1
-
-            )
-
-            cv2.putText(
-
-                frame,
-
-                label,
-
-                (
-                    x1 + 5,
-
-                    max(
-                        17,
-                        y1 - 7
-                    )
-
-                ),
-
-                cv2.FONT_HERSHEY_SIMPLEX,
-
-                0.43,
-
-                (20, 20, 20),
-
-                2
-
-            )
-
-           
-            cv2.circle(
-
-                frame,
-
-                (
-                    center_x,
-                    center_y
-                ),
-
-                4,
-
-                box_color,
-
-                -1
-
-            )
-
-
-            tracked_objects.append({
-
-                "id":
-                    track_id,
-
-                "class":
-                    class_name,
-
-                "confidence":
-                    0,
-
-                "x":
-                    x1,
-
-                "y":
                     y1,
+                    x2,
+                    y2,
+                    track_id,
+                    "zone"
+                )
 
-                "width":
-                    x2 - x1,
+                if evidence:
 
-                "height":
-                    y2 - y1,
+                    evidence_files.append(evidence)
 
-                "center_x":
-                    center_x,
+            track_inside_zone[track_id] = inside_zone
 
-                "center_y":
-                    center_y,
+        # -------------------------------------------------
+        # LOITERING
+        # -------------------------------------------------
 
-                "duration":
-                    duration,
+        if inside_zone:
 
-                "inside_zone":
-                    inside_zone
+            if track_id not in track_zone_start:
 
-            })
+                track_zone_start[track_id] = time.time()
 
-       
-
-        current_time = time.time()
-
-        stale_ids = [
-
-            track_id
-
-            for track_id, last_seen
-
-            in track_last_seen.items()
-
-            if current_time - last_seen > 15
-
-        ]
-
-        for track_id in stale_ids:
-
-            track_last_seen.pop(
-
-                track_id,
-
-                None
-
+            elapsed = (
+                time.time()
+                -
+                track_zone_start[track_id]
             )
 
-            track_previous_center.pop(
+            if (
+                elapsed >= settings["loitering_seconds"]
+                and
+                track_id not in track_loiter_alerted
+            ):
 
-                track_id,
+                track_loiter_alerted.add(track_id)
 
-                None
+                total_loitering_alerts += 1
 
-            )
+                alerts.append(
+                    f"LOITERING detected - ID {track_id}"
+                )
 
-            track_inside_zone.pop(
+                evidence = save_evidence(
+                    frame,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    track_id,
+                    "loitering"
+                )
 
-                track_id,
+                if evidence:
 
-                None
+                    evidence_files.append(evidence)
 
-            )
+        else:
 
             track_zone_start.pop(
-
                 track_id,
-
                 None
-
             )
 
-            track_loiter_alerted.discard(
+    # -----------------------------------------------------
+    # DRAW SECURITY ZONE
+    # -----------------------------------------------------
 
-                track_id
+    if settings["zone_enabled"]:
 
-            )
+        zone = settings["zone"]
 
-            last_zone_alert_time.pop(
+        zx1 = int(zone["x"] * width)
+        zy1 = int(zone["y"] * height)
 
-                track_id,
-
-                None
-
-            )
-
-            last_loiter_alert_time.pop(
-
-                track_id,
-
-                None
-
-            )
-
-            last_evidence_time.pop(
-
-                track_id,
-
-                None
-
-            )
-
-        # ====================================================
-        # LIVE COUNTS
-        # ====================================================
-
-        people_count = sum(
-
-            1
-
-            for obj in tracked_objects
-
-            if obj["class"] == "person"
-
+        zx2 = int(
+            (zone["x"] + zone["width"]) * width
         )
 
-        tracked_count = len(
-
-            tracked_objects
-
-        )
-
-        unique_count = len(
-
-            unique_track_ids
-
-        )
-
-        
-
-        class_counts = {}
-
-        for obj in tracked_objects:
-
-            name = obj["class"]
-
-            class_counts[name] = (
-
-                class_counts.get(
-
-                    name,
-
-                    0
-
-                )
-
-                + 1
-
-            )
-
-
-        processing_time = (
-
-            time.perf_counter()
-
-            -
-
-            start_time
-
-        )
-
-        processing_fps = (
-
-            1 / processing_time
-
-            if processing_time > 0
-
-            else 0
-
-        )
-
-       
-
-        footer = (
-
-            f"People: {people_count}   "
-
-            f"Tracked: {tracked_count}   "
-
-            f"Unique IDs: {unique_count}   "
-
-            f"AI FPS: {processing_fps:.1f}"
-
+        zy2 = int(
+            (zone["y"] + zone["height"]) * height
         )
 
         cv2.rectangle(
-
             frame,
-
-            (
-                0,
-                frame_height - 32
-            ),
-
-            (
-                frame_width,
-                frame_height
-            ),
-
-            (15, 20, 30),
-
-            -1
-
+            (zx1, zy1),
+            (zx2, zy2),
+            (0, 0, 255),
+            2
         )
 
         cv2.putText(
-
             frame,
-
-            footer,
-
-            (
-                10,
-                frame_height - 10
-            ),
-
+            "RESTRICTED ZONE",
+            (zx1, max(20, zy1 - 10)),
             cv2.FONT_HERSHEY_SIMPLEX,
-
-            0.42,
-
-            (255, 255, 255),
-
-            1
-
+            0.55,
+            (0, 0, 255),
+            2
         )
 
-       
-        success, buffer = cv2.imencode(
+    # -----------------------------------------------------
+    # DRAW ENTRY / EXIT LINE
+    # -----------------------------------------------------
 
-            ".jpg",
+    line_y = int(
+        settings["line_position"] * height
+    )
 
-            frame,
+    cv2.line(
+        frame,
+        (0, line_y),
+        (width, line_y),
+        (255, 255, 0),
+        2
+    )
 
-            [
+    cv2.putText(
+        frame,
+        "ENTRY / EXIT LINE",
+        (10, max(20, line_y - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 0),
+        2
+    )
 
-                cv2.IMWRITE_JPEG_QUALITY,
+    # -----------------------------------------------------
+    # ENCODE RESULT
+    # -----------------------------------------------------
 
-                75
+    success, encoded = cv2.imencode(
+        ".jpg",
+        frame,
+        [cv2.IMWRITE_JPEG_QUALITY, 75]
+    )
 
-            ]
-
-        )
-
-        if not success:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                    "Could not encode frame."
-
-            }), 500
-
-        encoded_image = (
-
-            base64.b64encode(
-
-                buffer
-
-            ).decode(
-
-                "utf-8"
-
-            )
-
-        )
-
+    if not success:
 
         return jsonify({
-
-            "success": True,
-
-            "image":
-                "data:image/jpeg;base64,"
-                + encoded_image,
-
-            "fps":
-                round(
-                    processing_fps,
-                    1
-                ),
-
-            "processing_fps":
-                round(
-                    processing_fps,
-                    1
-                ),
-
-            "processing_time":
-                round(
-                    processing_time * 1000,
-                    1
-                ),
-
-           
-
-            "tracked_count":
-                tracked_count,
-
-            "people_count":
-                people_count,
-
-           
-
-            "unique_tracks":
-                unique_count,
-
-           
-
-            "detections":
-                tracked_objects,
-
-            "classes":
-                class_counts,
-
-          
-
-            "alerts":
-                alerts,
-
-           
-            "evidence_files": [
-
-                "/evidence/" + name
-
-                for name in evidence_files
-
-            ],
-
-            "evidence_count":
-                total_evidence,
-
-           
-
-            "zone_enabled":
-                settings[
-                    "zone_enabled"
-                ],
-
-            "zone":
-                settings[
-                    "zone"
-                ],
-
-           
-
-            "loitering_seconds":
-                settings[
-                    "loitering_seconds"
-                ],
-
-          
-
-            "line_position":
-                settings[
-                    "line_position"
-                ],
-
-           
-            "entries":
-                total_entries,
-
-            "exits":
-                total_exits,
-
-            "entries_this_frame":
-                entries_this_frame,
-
-            "exits_this_frame":
-                exits_this_frame,
-
-          
-
-            "loitering_alerts":
-                total_loitering_alerts,
-
-            "zone_alerts":
-                total_zone_alerts
-
-        })
-
-    except Exception as error:
-
-        print()
-
-        print(
-            "Detection Error:",
-            error
-        )
-
-        print()
-
-        return jsonify({
-
             "success": False,
-
-            "message":
-                str(error)
-
+            "message": "Could not encode result"
         }), 500
 
+    image_base64 = base64.b64encode(
+        encoded.tobytes()
+    ).decode("utf-8")
 
+    processing_time = time.time() - start_time
+
+    processing_fps = (
+        1 / processing_time
+        if processing_time > 0
+        else 0
+    )
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
+
+    return jsonify({
+
+        "success": True,
+
+        "image": (
+            "data:image/jpeg;base64,"
+            + image_base64
+        ),
+
+        "fps": round(processing_fps, 2),
+
+        "processing_fps": round(
+            processing_fps,
+            2
+        ),
+
+        "processing_time": round(
+            processing_time,
+            4
+        ),
+
+        "tracked_count": len(current_ids),
+
+        "people_count": people_count,
+
+        "unique_tracks": len(
+            unique_track_ids
+        ),
+
+        "detections": len(
+            detections
+        ),
+
+        "classes": object_classes,
+
+        "alerts": alerts,
+
+        "evidence_files": evidence_files,
+
+        "evidence_count": total_evidence,
+
+        "zone_enabled": settings[
+            "zone_enabled"
+        ],
+
+        "zone": settings["zone"],
+
+        "loitering_seconds": settings[
+            "loitering_seconds"
+        ],
+
+        "line_position": settings[
+            "line_position"
+        ],
+
+        "entries": total_entries,
+
+        "exits": total_exits,
+
+        "entries_this_frame":
+            entries_this_frame,
+
+        "exits_this_frame":
+            exits_this_frame,
+
+        "loitering_alerts":
+            total_loitering_alerts,
+
+        "zone_alerts":
+            total_zone_alerts
+    })
+
+
+# =========================================================
+# SETTINGS API
+# =========================================================
+
+@app.route("/api/settings", methods=["POST"])
+def update_settings():
+
+    data = request.get_json(
+        silent=True
+    ) or {}
+
+    if "confidence" in data:
+
+        try:
+
+            settings["confidence"] = float(
+                data["confidence"]
+            )
+
+        except Exception:
+            pass
+
+    if "zone_enabled" in data:
+
+        settings["zone_enabled"] = bool(
+            data["zone_enabled"]
+        )
+
+    if "loitering_seconds" in data:
+
+        try:
+
+            settings[
+                "loitering_seconds"
+            ] = max(
+                1,
+                float(
+                    data["loitering_seconds"]
+                )
+            )
+
+        except Exception:
+            pass
+
+    if "line_position" in data:
+
+        try:
+
+            settings[
+                "line_position"
+            ] = min(
+                0.95,
+                max(
+                    0.05,
+                    float(
+                        data["line_position"]
+                    )
+                )
+            )
+
+        except Exception:
+            pass
+
+    if "zone" in data:
+
+        if isinstance(
+            data["zone"],
+            dict
+        ):
+
+            for key in [
+                "x",
+                "y",
+                "width",
+                "height"
+            ]:
+
+                if key in data["zone"]:
+
+                    try:
+
+                        settings[
+                            "zone"
+                        ][key] = float(
+                            data["zone"][key]
+                        )
+
+                    except Exception:
+                        pass
+
+    return jsonify({
+        "success": True,
+        "settings": settings
+    })
+
+
+# =========================================================
+# RESET API
+# =========================================================
+
+@app.route("/api/reset", methods=["POST"])
+def reset():
+
+    reset_tracking()
+
+    return jsonify({
+        "success": True,
+        "message": "Tracking reset successfully"
+    })
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+@app.route("/")
+def home():
+
+    return render_template(
+        "index.html"
+    )
+
+
+# =========================================================
+# HEALTH CHECK
+# =========================================================
+
+@app.route("/health")
+def health():
+
+    return jsonify({
+        "status": "ok",
+        "service": "VisionTrack AI"
+    })
+
+
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
 
-    port = int(
-
-        os.environ.get(
-
-            "PORT",
-
-            5000
-
-        )
-
-    )
-
-    print()
-
-    print(
-        f"VisionTrack AI running on port {port}"
-    )
-
-    print()
-
     app.run(
-
         host="0.0.0.0",
-
-        port=port,
-
+        port=PORT,
         debug=False
-
     )
